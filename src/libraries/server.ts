@@ -151,10 +151,6 @@ function onProxyResponse(proxy, proxyReq, proxyRes, req, res) {
         }
     }
 
-    // Strip cookies
-    delete proxyRes.headers["set-cookie"];
-    delete proxyRes.headers["set-cookie2"];
-
     proxyRes.headers["x-final-url"] = requestState.location.href;
     withCORS(proxyRes.headers, req);
     return true;
@@ -451,8 +447,6 @@ export default function server() {
         requireHeader: [],
         checkRateLimit: createRateLimitChecker(process.env.CORSANYWHERE_RATELIMIT),
         removeHeaders: [
-            "cookie",
-            "cookie2",
             // Strip Heroku-specific headers
             "x-request-start",
             "x-request-id",
@@ -576,6 +570,10 @@ export async function proxyM3U8(url: string, headers: any, res: http.ServerRespo
                     const regex = /https?:\/\/[^\""\s]+/g;
                     const url = `${web_server_url}${"/ts-proxy?url=" + encodeURIComponent(regex.exec(line)?.[0] ?? "") + "&headers=" + encodeURIComponent(JSON.stringify(headers))}`;
                     newLines.push(line.replace(regex, url));
+                } else if (line.startsWith("#EXT-X-MEDIA:")) {
+                    const regex = /https?:\/\/[^\""\s]+/g;
+                    const url = `${web_server_url}${"/m3u8-proxy?url=" + encodeURIComponent(regex.exec(line)?.[0] ?? "") + "&headers=" + encodeURIComponent(JSON.stringify(headers))}`;
+                    newLines.push(line.replace(regex, url));
                 } else {
                     newLines.push(line);
                 }
@@ -604,6 +602,10 @@ export async function proxyM3U8(url: string, headers: any, res: http.ServerRespo
                 if (line.startsWith("#EXT-X-KEY:")) {
                     const regex = /https?:\/\/[^\""\s]+/g;
                     const url = `${web_server_url}${"/ts-proxy?url=" + encodeURIComponent(regex.exec(line)?.[0] ?? "") + "&headers=" + encodeURIComponent(JSON.stringify(headers))}`;
+                    newLines.push(line.replace(regex, url));
+                } else if (line.startsWith("#EXT-X-MEDIA:")) {
+                    const regex = /https?:\/\/[^\""\s]+/g;
+                    const url = `${web_server_url}${"/m3u8-proxy?url=" + encodeURIComponent(regex.exec(line)?.[0] ?? "") + "&headers=" + encodeURIComponent(JSON.stringify(headers))}`;
                     newLines.push(line.replace(regex, url));
                 } else {
                     newLines.push(line);
