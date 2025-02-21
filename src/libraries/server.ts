@@ -664,12 +664,14 @@ export async function proxyTs(url: string, headers: any, req, res: http.ServerRe
             ...headers,
         },
     };
-
+    res.setHeader("Access-Control-Allow-Origin", "*");
+    
     // Proxy request and pipe to client
     try {
         if (forceHTTPS) {
             const proxy = https.request(options, (r) => {
                 r.headers["content-type"] = "video/mp2t";
+                r.headers["Access-Control-Allow-Origin"] = "*";
                 res.writeHead(r.statusCode ?? 200, r.headers);
 
                 r.pipe(res, {
