@@ -4,6 +4,12 @@ Proxies m3u8 files through pure JavaScript.
 ## About
 Some m3u8 files require special headers as well as CORS. This project achieves both by integrating Rob Wu's [CORS proxy](https://github.com/Rob--W/cors-anywhere) and adding a route to proxy m3u8 files.
 
+## Features
+- Proxies m3u8 and TS files with CORS support
+- Automatically replaces URLs in m3u8 files to point to the proxy
+- Supports custom headers for request authentication
+- **IPv6 Address Rotation**: Route requests through different IPv6 addresses to avoid rate limiting and IP blocks
+
 ## Installation
 1. Clone the repository.
 ```bash
@@ -24,7 +30,35 @@ PORT="3030"
 
 # Public URL to proxy ts files from
 PUBLIC_URL="https://m3u8.eltik.net"
+
+# IPv6 rotation configuration
+USE_IPV6_ROTATION=false
+IPV6_PREFIX=2001:db8
+IPV6_SUBNET=1000
+IPV6_INTERFACE=eth0
+IPV6_POOL_SIZE=20
+IPV6_POOL_INTERVAL=5000
+IPV6_BATCH_SIZE=5
+IPV6_DEBUG=false
 ```
+
+## IPv6 Rotation
+The proxy now supports IPv6 address rotation, which can help bypass rate limits and IP blocks. To use this feature:
+
+1. Set `USE_IPV6_ROTATION=true` in your `.env` file
+2. Configure your IPv6 prefix and subnet (typically provided by your ISP/hosting provider)
+3. Set the correct network interface name
+4. Adjust pool size and other parameters as needed
+
+When enabled, the proxy will:
+- Create a pool of random IPv6 addresses within your configured prefix/subnet
+- Assign these addresses to your network interface
+- Route outgoing requests through different IPv6 addresses in the pool
+- Automatically manage the pool (add/remove addresses)
+
+**Note**: IPv6 rotation requires root/administrator privileges on most systems to manage network interfaces.
+
+You can check the status of the IPv6 pool using the `/ipv6-status` endpoint.
 
 ## Usage
 To proxy m3u8 files, use the `/m3u8-proxy` route. All you have to do is input the URL and headers. For example:

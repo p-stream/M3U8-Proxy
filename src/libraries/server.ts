@@ -17,6 +17,24 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import colors from "colors";
 import axios from "axios";
+import { initIPv6Pool, isIPv6RotationEnabled, getIPv6PoolInfo } from "./ipv6pool";
+import { requestWithIPv6, createIPv6StreamRequest } from "./ipv6proxy";
+
+// Flag to control whether to use IPv6 rotation
+const useIPv6Rotation = process.env.USE_IPV6_ROTATION === "true";
+
+// Initialize IPv6 rotation if enabled
+if (useIPv6Rotation) {
+    initIPv6Pool().then(success => {
+        if (success) {
+            console.log(colors.green("IPv6 rotation enabled and initialized successfully"));
+            const poolInfo = getIPv6PoolInfo();
+            console.log(colors.blue(`IPv6 Pool Info: ${poolInfo.poolSize} addresses on ${poolInfo.interface} with prefix ${poolInfo.prefix}`));
+        } else {
+            console.log(colors.yellow("IPv6 rotation initialization failed - falling back to default networking"));
+        }
+    });
+}
 
 function withCORS(headers, request) {
     headers["access-control-allow-origin"] = "*";
@@ -239,6 +257,11 @@ function getHandler(options, proxy) {
             // Pre-flight request. Reply successfully:
             res.writeHead(200, cors_headers);
             res.end();
+            return;
+        }
+
+        // Check if this is an IPv6 status request
+        if (addIPv6StatusRoute(req, res)) {
             return;
         }
 
@@ -547,13 +570,20 @@ function createRateLimitChecker(CORSANYWHERE_RATELIMIT) {
  * @param res Server response object
  */
 export async function proxyM3U8(url: string, headers: any, res: http.ServerResponse) {
-    const req = await axios(url, {
-        headers: headers,
-    }).catch((err) => {
+    let req;
+    try {
+        // Use IPv6 rotation if enabled, otherwise fall back to regular request
+        if (useIPv6Rotation && isIPv6RotationEnabled()) {
+            req = await requestWithIPv6(url, { headers });
+        } else {
+            req = await axios(url, { headers });
+        }
+    } catch (err: any) {
         res.writeHead(500);
         res.end(err.message);
-        return null;
-    });
+        return;
+    }
+    
     if (!req) {
         return;
     }
@@ -640,64 +670,107 @@ export async function proxyM3U8(url: string, headers: any, res: http.ServerRespo
  * @param res Server response object
  */
 export async function proxyTs(url: string, headers: any, req, res: http.ServerResponse) {
-    // I love how NodeJS HTTP request client only takes http URLs :D It's so fun!
-    // I'll probably refactor this later.
-
-    let forceHTTPS = false;
-
-    if (url.startsWith("https://")) {
-        forceHTTPS = true;
-    }
-
     const uri = new URL(url);
-
-    // Options
-    // It might be worth adding ...req.headers to the headers object, but once I did that
-    // the code broke and I receive errors such as "Cannot access direct IP" or whatever.
-    const options = {
-        hostname: uri.hostname,
-        port: uri.port,
-        path: uri.pathname + uri.search,
-        method: req.method,
-        headers: {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/80.0.3987.132 Safari/537.36",
-            ...headers,
-        },
-    };
+    const forceHTTPS = url.startsWith("https://");
+    
+    // Set up CORS headers
     res.setHeader("Access-Control-Allow-Origin", "*");
     
-    // Proxy request and pipe to client
     try {
-        if (forceHTTPS) {
-            const proxy = https.request(options, (r) => {
+        if (useIPv6Rotation && isIPv6RotationEnabled()) {
+            // Use IPv6 rotation if enabled
+            const requestCallback = (r) => {
                 r.headers["content-type"] = "video/mp2t";
                 r.headers["Access-Control-Allow-Origin"] = "*";
                 res.writeHead(r.statusCode ?? 200, r.headers);
-
+                
                 r.pipe(res, {
                     end: true,
                 });
-            });
-
+            };
+            
+            // Create a request with IPv6 rotation
+            const proxy = createIPv6StreamRequest(
+                req.method, 
+                url, 
+                {
+                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/80.0.3987.132 Safari/537.36",
+                    ...headers,
+                },
+                requestCallback
+            );
+            
             req.pipe(proxy, {
                 end: true,
             });
         } else {
-            const proxy = http.request(options, (r) => {
-                r.headers["content-type"] = "video/mp2t";
-                res.writeHead(r.statusCode ?? 200, r.headers);
+            // Original implementation without IPv6 rotation
+            // Options
+            const options = {
+                hostname: uri.hostname,
+                port: uri.port,
+                path: uri.pathname + uri.search,
+                method: req.method,
+                headers: {
+                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/80.0.3987.132 Safari/537.36",
+                    ...headers,
+                },
+            };
+            
+            // Proxy request and pipe to client
+            if (forceHTTPS) {
+                const proxy = https.request(options, (r) => {
+                    r.headers["content-type"] = "video/mp2t";
+                    r.headers["Access-Control-Allow-Origin"] = "*";
+                    res.writeHead(r.statusCode ?? 200, r.headers);
 
-                r.pipe(res, {
+                    r.pipe(res, {
+                        end: true,
+                    });
+                });
+
+                req.pipe(proxy, {
                     end: true,
                 });
-            });
-            req.pipe(proxy, {
-                end: true,
-            });
+            } else {
+                const proxy = http.request(options, (r) => {
+                    r.headers["content-type"] = "video/mp2t";
+                    res.writeHead(r.statusCode ?? 200, r.headers);
+
+                    r.pipe(res, {
+                        end: true,
+                    });
+                });
+                req.pipe(proxy, {
+                    end: true,
+                });
+            }
         }
     } catch (e: any) {
         res.writeHead(500);
         res.end(e.message);
         return null;
     }
+}
+
+// Add a new endpoint to get IPv6 pool status
+function addIPv6StatusRoute(req, res) {
+    const uri = new URL(req.url ?? web_server_url, "http://localhost:3000");
+    
+    if (uri.pathname === "/ipv6-status") {
+        const status = {
+            enabled: useIPv6Rotation,
+            active: isIPv6RotationEnabled(),
+            poolInfo: getIPv6PoolInfo()
+        };
+        
+        res.writeHead(200, { 
+            "Content-Type": "application/json",
+            "Access-Control-Allow-Origin": "*"
+        });
+        res.end(JSON.stringify(status, null, 2));
+        return true;
+    }
+    
+    return false;
 }
