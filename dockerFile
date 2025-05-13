@@ -1,0 +1,28 @@
+# Use Node.js as the base image
+FROM node:18-alpine
+
+# Create app directory
+WORKDIR /app
+
+# Copy package files
+COPY package*.json ./
+
+# Install dependencies
+RUN npm install
+
+# Copy source code
+COPY . .
+
+# Build the application
+RUN npm run build
+
+# Expose the port the app runs on
+EXPOSE 3030
+
+# Set environment variables (can be overridden at runtime)
+ENV HOST=0.0.0.0
+ENV PORT=3030
+ENV PUBLIC_URL=https://example.com
+
+# Run the application
+CMD ["npm", "start"]
